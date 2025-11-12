@@ -58,8 +58,22 @@ env:
   IMAGE_NAME: ${{ inputs.image_name || github.repository }}
 
 jobs:
+  prepare:
+    name: Prepare Build Matrix
+    runs-on: ubuntu-latest
+    outputs:
+      platforms: ${{ steps.platforms.outputs.matrix }}
+    steps:
+      - name: Create platform matrix
+        id: platforms
+        run: |
+          # Convert comma-separated string to JSON array
+          platforms=$(echo "${{ inputs.platforms }}" | jq -Rc 'split(",") | map(gsub("^\\s+|\\s+$";""))')
+          echo "matrix=$platforms" >> $GITHUB_OUTPUT
+
   build:
     name: Build ${{ matrix.platform }}
+    needs: prepare
     runs-on: ${{ matrix.platform == 'linux/arm64' && github.event.repository.visibility == 'public' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     permissions:
       packages: write
@@ -67,7 +81,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: ${{ fromJSON(format('["{0}"]', inputs.platforms)) }}
+        platform: ${{ fromJSON(needs.prepare.outputs.platforms) }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
