@@ -115,25 +115,21 @@ jobs:
           target: ${{ env.IDF_TARGET }}
           extra_docker_args: -v ./output:/output
           command: |
+            set -e
+            
             # Set up the environment
             export BUILD_VERSION=${{ env.BUILD_VERSION }}
             export BUILD_VARIANT=${{ matrix.config }}
             export GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN }}
 
+            # Ensure output directory exists in container
+            mkdir -p /output
+
             # Build without piping - write directly to log file
-            set +e
             idf.py build > build.log 2>&1
-            BUILD_EXIT_CODE=$?
-            set -e
 
             # Display the log for debugging
             cat build.log
-
-            # Exit with build's actual exit code if it failed
-            if [ $BUILD_EXIT_CODE -ne 0 ]; then
-              echo "Build failed with exit code $BUILD_EXIT_CODE"
-              exit $BUILD_EXIT_CODE
-            fi
 
             # Extract flash_mode, flash_size, flash_freq, and binaries from build.log
             BINARY_INFO=$(grep -oP "^\S+\.bin binary size \S+ bytes" build.log | tail -n 1)
