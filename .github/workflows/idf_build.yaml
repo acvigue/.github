@@ -130,7 +130,15 @@ jobs:
           echo "BUILD_VERSION=${BUILD_VERSION}" >> $GITHUB_ENV
           echo "BUILD_VERSION set to ${BUILD_VERSION}"
           echo "BUILD_VARIANT=${{ matrix.config }}" >> $GITHUB_ENV
-          mkdir -p /output
+
+      - name: Set BUILD_VERSION for development build
+        if: "!startsWith(github.ref, 'refs/tags/')"
+        run: |
+          echo "Setting BUILD_VERSION from dev"
+          BUILD_VERSION=dev
+          echo "BUILD_VERSION=${BUILD_VERSION}" >> $GITHUB_ENV
+          echo "BUILD_VERSION set to ${BUILD_VERSION}"
+          echo "BUILD_VARIANT=${{ matrix.config }}" >> $GITHUB_ENV
 
       - name: Cache apt packages
         uses: awalsh128/cache-apt-pkgs-action@latest
@@ -207,7 +215,7 @@ jobs:
               "new_install_prompt_erase": false,
               "builds": [
                   {
-                      "chipFamily": "${IDF_TARGET}",
+                      "chipFamily": ${IDF_TARGET},
                       "improv": false,
                       "flash_mode": "${FLASH_MODE}",
                       "flash_size": "${FLASH_SIZE}",
