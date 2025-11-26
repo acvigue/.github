@@ -126,10 +126,7 @@ jobs:
             mkdir -p /output
 
             # Build without piping - write directly to log file
-            idf.py build > build.log 2>&1
-
-            # Display the log for debugging
-            cat build.log
+            idf.py build
 
             # Extract flash_mode, flash_size, flash_freq, and binaries from build.log
             BINARY_INFO=$(grep -oP "^\S+\.bin binary size \S+ bytes" build.log | tail -n 1)
