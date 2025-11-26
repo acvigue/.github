@@ -125,7 +125,7 @@ jobs:
             cp -r ./build /build
 
       - name: Compute manifest
-        command: |
+        run: |
           if [ ! -f build/flasher_args.json ]; then
               echo "Error: flasher_args.json not found in build directory"
               exit 1
