@@ -97,6 +97,30 @@ jobs:
           IDF_TARGET=$(grep '^CONFIG_IDF_TARGET=' sdkconfig | cut -d'=' -f2)
           echo "IDF_TARGET=${IDF_TARGET}" >> $GITHUB_ENV
 
+      - name: Cache ESP-IDF
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.espressif
+            ~/.cache/pip
+          key: esp-idf-${{ inputs.idf_version }}-${{ env.IDF_TARGET }}-${{ runner.os }}
+          restore-keys: |
+            esp-idf-${{ inputs.idf_version }}-${{ env.IDF_TARGET }}-
+            esp-idf-${{ inputs.idf_version }}-
+
+      - name: Cache build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            build
+            !build/*.bin
+            !build/*.elf
+            !build/*.map
+          key: build-cache-${{ matrix.config }}-${{ hashFiles('**/CMakeLists.txt', '**/Kconfig*', 'sdkconfig', 'components/**', 'main/**') }}
+          restore-keys: |
+            build-cache-${{ matrix.config }}-
+            build-cache-
+
       - name: Set BUILD_VERSION for tagged push
         if: startsWith(github.ref, 'refs/tags/')
         run: |
@@ -108,15 +132,19 @@ jobs:
           echo "BUILD_VARIANT=${{ matrix.config }}" >> $GITHUB_ENV
           mkdir -p /output
 
+      - name: Cache apt packages
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: protobuf-compiler protobuf-c-compiler
+          version: 1.0
+
       - name: idf build
         uses: espressif/esp-idf-ci-action@v1
         with:
           esp_idf_version: ${{ inputs.idf_version || 'v5.5.1' }}
           target: ${{ env.IDF_TARGET }}
-          extra_docker_args: -v ./build:/build
+          extra_docker_args: -v ./build:/build -v $HOME/.espressif:/root/.espressif -v $HOME/.cache/pip:/root/.cache/pip
           command: |
-            apt update -y
-            apt install -y protobuf-compiler protobuf-c-compiler
             idf.py build
 
       - name: Compute manifest
@@ -127,7 +155,7 @@ jobs:
           fi
 
           # Ensure output directory exists
-          mkdir -p /output
+          mkdir -p ./output
 
           # Copy all flash files and build parts array for manifest
           PARTS_JSON="["
@@ -149,7 +177,7 @@ jobs:
               
               # Copy the file
               if [ -f "build/$file" ]; then
-                  cp "build/$file" "/output/$safe_filename"
+                  cp "build/$file" "./output/$safe_filename"
                   echo "Copied build/$file to /output/$safe_filename"
                   
                   # Add to parts array
@@ -171,7 +199,7 @@ jobs:
           FLASH_FREQ=$(jq -r '.flash_settings.flash_freq // "40m"' build/flasher_args.json)
 
           # Generate ESP Web Tools manifest with flash settings
-          cat > /output/${BUILD_VARIANT}_manifest.json << EOF
+          cat > ./output/${BUILD_VARIANT}_manifest.json << EOF
           {
               "name": "${{ inputs.project_name || 'KD Clock' }} - ${BUILD_VARIANT}",
               "version": "${BUILD_VERSION}",
@@ -194,7 +222,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.config }}_firmware_files
-          path: output/*
+          path: ./output/*
 
   release:
     name: Release
