@@ -70,7 +70,7 @@ jobs:
       matrix:
         config: ${{ fromJson(needs.variants.outputs.matrix) }}
 
-    # Steps represent a sequence of tasks that will be executed as part of the job
+    # Steps represent a sequence of tasks that will be executed as part of your job
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -106,7 +106,7 @@ jobs:
           echo "BUILD_VERSION=${BUILD_VERSION}" >> $GITHUB_ENV
           echo "BUILD_VERSION set to ${BUILD_VERSION}"
           echo "BUILD_VARIANT=${{ matrix.config }}" >> $GITHUB_ENV
-          mkdir output
+          mkdir -p output
 
       - name: idf build
         uses: espressif/esp-idf-ci-action@v1
@@ -120,12 +120,22 @@ jobs:
             export BUILD_VARIANT=${{ matrix.config }}
             export GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN }}
 
-            #build
-            idf.py build | tee build.log
+            # Build without piping - write directly to log file
+            set +e
+            idf.py build > build.log 2>&1
+            BUILD_EXIT_CODE=$?
+            set -e
+
+            # Display the log for debugging
+            cat build.log
+
+            # Exit with build's actual exit code if it failed
+            if [ $BUILD_EXIT_CODE -ne 0 ]; then
+              echo "Build failed with exit code $BUILD_EXIT_CODE"
+              exit $BUILD_EXIT_CODE
+            fi
 
             # Extract flash_mode, flash_size, flash_freq, and binaries from build.log
-            FLASH_LINE=$(grep "python -m esptool" build.log | grep -v "@flash_args" | tail -n 1)
-
             BINARY_INFO=$(grep -oP "^\S+\.bin binary size \S+ bytes" build.log | tail -n 1)
             BINARY_FILE=$(echo "$BINARY_INFO" | sed -n "s/^\(\S\+\.bin\).*/\1/p")
 
@@ -199,6 +209,7 @@ jobs:
         with:
           name: ${{ matrix.config }}_firmware_files
           path: output/*
+
   release:
     name: Release
     runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
@@ -208,6 +219,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: ./artifacts
+
       - name: Flatten artifacts folder
         run: |
           # List all files for debugging
@@ -222,6 +234,7 @@ jobs:
               rmdir "$folder"
               mv -v "$artifacts_dir/$folder_name.tmp" "$artifacts_dir/$folder_name"
           done
+
       - name: Create release
         if: ${{ inputs.create_release != false }}
         uses: ncipollo/release-action@v1
