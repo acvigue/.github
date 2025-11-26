@@ -1,11 +1,8 @@
 # This is a esp idf workflow to build ESP32 based project
-name: ESP-IDF Build
+name: Build and Release
 
 # Controls when the action will run.
 on:
-  push:
-    tags:
-      - v*
   workflow_call:
     inputs:
       idf_version:
@@ -20,7 +17,7 @@ on:
         default: "variants"
       project_name:
         description: "Project name for manifest"
-        required: true
+        required: false
         type: string
         default: "KD Clock"
       funding_url:
