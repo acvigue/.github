@@ -126,6 +126,9 @@ jobs:
               exit 1
           fi
 
+          # Ensure output directory exists
+          mkdir -p /output
+
           # Copy all flash files and build parts array for manifest
           PARTS_JSON="["
           FIRST_PART=true
@@ -134,6 +137,8 @@ jobs:
           for offset_file in $(jq -r '.flash_files | to_entries[] | "\(.key):\(.value)"' build/flasher_args.json); do
               offset="${offset_file%:*}"
               file="${offset_file#*:}"
+
+              echo 
               
               # Convert hex offset to decimal
               offset_dec=$(printf "%d" "$offset")
