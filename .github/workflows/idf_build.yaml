@@ -117,12 +117,7 @@ jobs:
           command: |
             apt update -y
             apt install -y protobuf-compiler protobuf-c-compiler
-
-            echo $(pwd)
-
             idf.py build
-
-            cp -r ./build/* /build/
 
       - name: Compute manifest
         run: |
