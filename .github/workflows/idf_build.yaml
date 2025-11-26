@@ -7,7 +7,7 @@ on:
     inputs:
       idf_version:
         description: "ESP-IDF version to use"
-        required: false
+        required: true
         type: string
         default: "v5.5.1"
       variants_path:
@@ -17,7 +17,7 @@ on:
         default: "variants"
       project_name:
         description: "Project name for manifest"
-        required: false
+        required: true
         type: string
         default: "KD Clock"
       funding_url:
@@ -37,7 +37,7 @@ on:
         default: "ubuntu-latest"
       create_release:
         description: "Whether to create a GitHub release"
-        required: false
+        required: true
         type: boolean
         default: false
 
