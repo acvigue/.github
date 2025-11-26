@@ -122,7 +122,7 @@ jobs:
 
             idf.py build
 
-            cp -r ./build /build
+            cp -r ./build/* /build/
 
       - name: Compute manifest
         run: |
