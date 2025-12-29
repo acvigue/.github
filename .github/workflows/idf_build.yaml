@@ -141,7 +141,7 @@ jobs:
           echo "BUILD_VARIANT=${{ matrix.config }}" >> $GITHUB_ENV
 
       - name: Cache apt packages
-        uses: awalsh128/cache-apt-pkgs-action@latest
+        uses: awalsh128/cache-apt-pkgs-action@v1
         with:
           packages: protobuf-compiler protobuf-c-compiler
           version: 1.0
@@ -183,7 +183,7 @@ jobs:
               
               # Create safe filename for artifact
               basename_file=$(basename "$file")
-              safe_filename="${basename_file%.*}_${BUILD_VARIANT}.${basename_file##*.}"
+              safe_filename="${BUILD_VARIANT}_${basename_file}"
               
               # Copy the file
               if [ -f "build/$file" ]; then
@@ -202,6 +202,13 @@ jobs:
               fi
           done
           PARTS_JSON="$PARTS_JSON]"
+
+          # Copy ELF file for debugging
+          ELF_FILE=$(find build -maxdepth 1 -name "*.elf" -type f | head -1)
+          if [ -n "$ELF_FILE" ] && [ -f "$ELF_FILE" ]; then
+              cp "$ELF_FILE" "./output/${BUILD_VARIANT}.elf"
+              echo "Copied $ELF_FILE to ./output/${BUILD_VARIANT}.elf"
+          fi
 
           # Extract flash settings
           FLASH_MODE=$(jq -r '.flash_settings.flash_mode // "dio"' build/flasher_args.json)
@@ -264,7 +271,7 @@ jobs:
 
       - name: Create release
         if: ${{ inputs.create_release != false }}
-        uses: ncipollo/release-action@v1
+        uses: ncipollo/release-action@v1.16.0
         with:
           artifacts: "artifacts/*"
           omitBody: true
