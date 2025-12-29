@@ -146,12 +146,17 @@ jobs:
           packages: protobuf-compiler protobuf-c-compiler
           version: 1.0
 
+      - name: Install buf
+        uses: bufbuild/buf-action@v1
+        with:
+          setup_only: true
+
       - name: idf build
         uses: espressif/esp-idf-ci-action@v1
         with:
           esp_idf_version: ${{ inputs.idf_version || 'v5.5.1' }}
           target: ${{ env.IDF_TARGET }}
-          extra_docker_args: -v ./build:/build -v $HOME/.espressif:/root/.espressif -v $HOME/.cache/pip:/root/.cache/pip
+          extra_docker_args: -v ./build:/build -v $HOME/.espressif:/root/.espressif -v $HOME/.cache/pip:/root/.cache/pip -v $HOME/.cache/buf:/root/.cache/buf -v $(which buf):/usr/local/bin/buf
           command: |
             export BUILD_VARIANT=${{ matrix.config }}
             export BUILD_VERSION=${{ env.BUILD_VERSION }}
