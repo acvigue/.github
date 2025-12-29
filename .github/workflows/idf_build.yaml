@@ -1,13 +1,12 @@
-# This is a esp idf workflow to build ESP32 based project
+# ESP-IDF workflow to build ESP32 based projects
 name: Build and Release
 
-# Controls when the action will run.
 on:
   workflow_call:
     inputs:
       idf_version:
         description: "ESP-IDF version to use"
-        required: true
+        required: false
         type: string
         default: "v5.5.1"
       variants_path:
@@ -17,7 +16,7 @@ on:
         default: "variants"
       project_name:
         description: "Project name for manifest"
-        required: true
+        required: false
         type: string
         default: "KD Clock"
       funding_url:
@@ -37,11 +36,10 @@ on:
         default: "ubuntu-latest"
       create_release:
         description: "Whether to create a GitHub release"
-        required: true
+        required: false
         type: boolean
         default: false
 
-# A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
   variants:
     name: Generate build variants
@@ -54,36 +52,33 @@ jobs:
         run: |
           VARIANTS_PATH="${{ inputs.variants_path || 'variants' }}"
           if [ -d "$VARIANTS_PATH" ] && [ "$(ls -A "$VARIANTS_PATH" 2>/dev/null)" ]; then
-            # Variants directory exists and is not empty
             echo "matrix=$(cd "$VARIANTS_PATH" && ls * | jq -R -s -c 'split("\n")[:-1]')" >> $GITHUB_OUTPUT
           else
-            # Variants directory is empty or doesn't exist, use default
             echo "matrix=[\"default\"]" >> $GITHUB_OUTPUT
           fi
-  build:
-    # The type of runner that the job will run on
-    runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
 
+  build:
+    runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
     needs: variants
     strategy:
-      # The build matrix defines the different configurations to run the job with
+      fail-fast: false
       matrix:
         config: ${{ fromJson(needs.variants.outputs.matrix) }}
-
-    # Steps represent a sequence of tasks that will be executed as part of your job
+    env:
+      IDF_PATH: ${{ github.workspace }}/esp-idf
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
           submodules: ${{ inputs.checkout_submodules && 'recursive' || 'false' }}
+          path: project
 
       - name: Handle SDKCONFIG overlay
+        working-directory: project
         run: |
           if [ "${{ matrix.config }}" = "default" ]; then
-            # Use base sdkconfig as-is for default variant
             echo "Using base sdkconfig for default variant"
           else
-            # Apply variant overlay to base sdkconfig
             VARIANTS_PATH="${{ inputs.variants_path || 'variants' }}"
             if [ -f "$VARIANTS_PATH/${{ matrix.config }}" ]; then
               awk 'FNR==NR { if ($0 ~ /^CONFIG_[A-Za-z0-9_]*=/) { split($0,a,"="); cfg[a[1]]=$0 } next } $0 ~ /^CONFIG_[A-Za-z0-9_]*=/ { key=substr($0,1,index($0,"=")-1); print (key in cfg ? cfg[key] : $0); next } 1; END { for (k in cfg) if (!seen[k]++) print cfg[k] }' "$VARIANTS_PATH/${{ matrix.config }}" sdkconfig > temp && mv temp sdkconfig
@@ -93,163 +88,147 @@ jobs:
           fi
 
       - name: Extract CONFIG_IDF_TARGET
+        working-directory: project
         run: |
-          IDF_TARGET=$(grep '^CONFIG_IDF_TARGET=' sdkconfig | cut -d'=' -f2)
+          IDF_TARGET=$(grep '^CONFIG_IDF_TARGET=' sdkconfig | cut -d'=' -f2 | tr -d '"')
           echo "IDF_TARGET=${IDF_TARGET}" >> $GITHUB_ENV
 
+      - name: Set build environment variables
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            TAG_NAME=${GITHUB_REF#refs/tags/}
+            echo "BUILD_VERSION=${TAG_NAME#v}" >> $GITHUB_ENV
+          else
+            echo "BUILD_VERSION=dev" >> $GITHUB_ENV
+          fi
+          echo "BUILD_VARIANT=${{ matrix.config }}" >> $GITHUB_ENV
+
       - name: Cache ESP-IDF
+        id: cache-idf
         uses: actions/cache@v4
         with:
           path: |
+            esp-idf
             ~/.espressif
-            ~/.cache/pip
-          key: esp-idf-${{ inputs.idf_version }}-${{ env.IDF_TARGET }}-${{ runner.os }}
+          key: esp-idf-${{ inputs.idf_version }}-${{ env.IDF_TARGET }}-${{ runner.os }}-v2
           restore-keys: |
             esp-idf-${{ inputs.idf_version }}-${{ env.IDF_TARGET }}-
             esp-idf-${{ inputs.idf_version }}-
 
-      - name: Cache build artifacts
-        uses: actions/cache@v4
-        with:
-          path: |
-            build
-            !build/*.bin
-            !build/*.elf
-            !build/*.map
-          key: build-cache-${{ matrix.config }}-${{ hashFiles('**/CMakeLists.txt', '**/Kconfig*', 'sdkconfig', 'components/**', 'main/**') }}
-          restore-keys: |
-            build-cache-${{ matrix.config }}-
-            build-cache-
-
-      - name: Set BUILD_VERSION for tagged push
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Clone ESP-IDF
+        if: steps.cache-idf.outputs.cache-hit != 'true'
         run: |
-          echo "Setting BUILD_VERSION from tag"
-          TAG_NAME=${GITHUB_REF#refs/tags/}
-          BUILD_VERSION=${TAG_NAME#v}
-          echo "BUILD_VERSION=${BUILD_VERSION}" >> $GITHUB_ENV
-          echo "BUILD_VERSION set to ${BUILD_VERSION}"
-          echo "BUILD_VARIANT=${{ matrix.config }}" >> $GITHUB_ENV
+          git clone --depth 1 --branch ${{ inputs.idf_version }} --recursive https://github.com/espressif/esp-idf.git esp-idf
 
-      - name: Set BUILD_VERSION for development build
-        if: "!startsWith(github.ref, 'refs/tags/')"
+      - name: Install ESP-IDF
         run: |
-          echo "Setting BUILD_VERSION from dev"
-          BUILD_VERSION=dev
-          echo "BUILD_VERSION=${BUILD_VERSION}" >> $GITHUB_ENV
-          echo "BUILD_VERSION set to ${BUILD_VERSION}"
-          echo "BUILD_VARIANT=${{ matrix.config }}" >> $GITHUB_ENV
-
-      - name: Cache apt packages
-        uses: awalsh128/cache-apt-pkgs-action@v1
-        with:
-          packages: protobuf-compiler protobuf-c-compiler
-          version: 1.0
+          cd esp-idf
+          ./install.sh ${{ env.IDF_TARGET }}
 
       - name: Install buf
         uses: bufbuild/buf-action@v1
         with:
           setup_only: true
 
-      - name: idf build
-        uses: espressif/esp-idf-ci-action@v1
+      - name: Cache build artifacts
+        uses: actions/cache@v4
         with:
-          esp_idf_version: ${{ inputs.idf_version || 'v5.5.1' }}
-          target: ${{ env.IDF_TARGET }}
-          extra_docker_args: -v ./build:/build -v $HOME/.espressif:/root/.espressif -v $HOME/.cache/pip:/root/.cache/pip -v $HOME/.cache/buf:/root/.cache/buf -v $(which buf):/usr/local/bin/buf
-          command: |
-            export BUILD_VARIANT=${{ matrix.config }}
-            export BUILD_VERSION=${{ env.BUILD_VERSION }}
-            idf.py build
+          path: |
+            project/build
+            !project/build/*.bin
+            !project/build/*.elf
+            !project/build/*.map
+          key: build-${{ matrix.config }}-${{ hashFiles('project/**/CMakeLists.txt', 'project/**/Kconfig*', 'project/sdkconfig', 'project/components/**', 'project/main/**') }}
+          restore-keys: |
+            build-${{ matrix.config }}-
 
-      - name: Compute manifest
+      - name: Build project
+        working-directory: project
+        run: |
+          source $IDF_PATH/export.sh
+          export BUILD_VARIANT="${{ matrix.config }}"
+          export BUILD_VERSION="${{ env.BUILD_VERSION }}"
+          idf.py build
+
+      - name: Collect flash artifacts
+        working-directory: project
+        id: collect
         run: |
           if [ ! -f build/flasher_args.json ]; then
-              echo "Error: flasher_args.json not found in build directory"
-              exit 1
+            echo "Error: flasher_args.json not found in build directory"
+            exit 1
           fi
 
-          # Ensure output directory exists
           mkdir -p ./output
-
-          # Copy all flash files and build parts array for manifest
           PARTS_JSON="["
           FIRST_PART=true
 
-          # Parse flash_files from JSON and copy each file
           for offset_file in $(jq -r '.flash_files | to_entries[] | "\(.key):\(.value)"' build/flasher_args.json); do
-              offset="${offset_file%:*}"
-              file="${offset_file#*:}"
+            offset="${offset_file%:*}"
+            file="${offset_file#*:}"
+            offset_dec=$(printf "%d" "$offset")
+            basename_file=$(basename "$file")
+            safe_filename="${BUILD_VARIANT}_${basename_file}"
 
-              echo 
-              
-              # Convert hex offset to decimal
-              offset_dec=$(printf "%d" "$offset")
-              
-              # Create safe filename for artifact
-              basename_file=$(basename "$file")
-              safe_filename="${BUILD_VARIANT}_${basename_file}"
-              
-              # Copy the file
-              if [ -f "build/$file" ]; then
-                  cp "build/$file" "./output/$safe_filename"
-                  echo "Copied build/$file to /output/$safe_filename"
-                  
-                  # Add to parts array
-                  if [ "$FIRST_PART" = true ]; then
-                      FIRST_PART=false
-                  else
-                      PARTS_JSON="$PARTS_JSON,"
-                  fi
-                  PARTS_JSON="$PARTS_JSON { \"path\": \"$safe_filename\", \"offset\": $offset_dec }"
-              else
-                  echo "Warning: File build/$file not found, skipping"
-              fi
+            if [ -f "build/$file" ]; then
+              cp "build/$file" "./output/$safe_filename"
+              echo "Copied build/$file to ./output/$safe_filename"
+
+              [ "$FIRST_PART" = true ] && FIRST_PART=false || PARTS_JSON="$PARTS_JSON,"
+              PARTS_JSON="$PARTS_JSON { \"path\": \"$safe_filename\", \"offset\": $offset_dec }"
+            else
+              echo "Warning: File build/$file not found, skipping"
+            fi
           done
-          PARTS_JSON="$PARTS_JSON]"
 
-          # Copy ELF file for debugging
+          echo "parts_json=${PARTS_JSON}]" >> $GITHUB_OUTPUT
+
+      - name: Copy ELF file
+        working-directory: project
+        run: |
           ELF_FILE=$(find build -maxdepth 1 -name "*.elf" -type f | head -1)
-          if [ -n "$ELF_FILE" ] && [ -f "$ELF_FILE" ]; then
-              cp "$ELF_FILE" "./output/${BUILD_VARIANT}.elf"
-              echo "Copied $ELF_FILE to ./output/${BUILD_VARIANT}.elf"
+          if [ -n "$ELF_FILE" ]; then
+            cp "$ELF_FILE" "./output/${BUILD_VARIANT}.elf"
+            echo "Copied $ELF_FILE to ./output/${BUILD_VARIANT}.elf"
           fi
 
-          # Extract flash settings
+      - name: Generate manifest
+        working-directory: project
+        run: |
           FLASH_MODE=$(jq -r '.flash_settings.flash_mode // "dio"' build/flasher_args.json)
           FLASH_SIZE=$(jq -r '.flash_settings.flash_size // "detect"' build/flasher_args.json)
           FLASH_FREQ=$(jq -r '.flash_settings.flash_freq // "40m"' build/flasher_args.json)
 
-          # Generate ESP Web Tools manifest with flash settings
           cat > ./output/${BUILD_VARIANT}_manifest.json << EOF
           {
-              "name": "${{ inputs.project_name || 'KD Clock' }} - ${BUILD_VARIANT}",
-              "version": "${BUILD_VERSION}",
-              "funding_url": "${{ inputs.funding_url || 'https://koiosdigital.com' }}",
-              "new_install_prompt_erase": false,
-              "builds": [
-                  {
-                      "chipFamily": ${IDF_TARGET},
-                      "improv": false,
-                      "flash_mode": "${FLASH_MODE}",
-                      "flash_size": "${FLASH_SIZE}",
-                      "flash_freq": "${FLASH_FREQ}",
-                      "parts": ${PARTS_JSON}
-                  }
-              ]
+            "name": "${{ inputs.project_name }} - ${BUILD_VARIANT}",
+            "version": "${BUILD_VERSION}",
+            "funding_url": "${{ inputs.funding_url }}",
+            "new_install_prompt_erase": false,
+            "builds": [
+              {
+                "chipFamily": "${IDF_TARGET}",
+                "improv": false,
+                "flash_mode": "${FLASH_MODE}",
+                "flash_size": "${FLASH_SIZE}",
+                "flash_freq": "${FLASH_FREQ}",
+                "parts": ${{ steps.collect.outputs.parts_json }}
+              }
+            ]
           }
           EOF
 
-      - name: Upload all flash files and manifest
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.config }}_firmware_files
-          path: ./output/*
+          path: project/output/*
 
   release:
     name: Release
     runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
     needs: build
+    if: inputs.create_release
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -258,24 +237,15 @@ jobs:
 
       - name: Flatten artifacts folder
         run: |
-          # List all files for debugging
           find ./artifacts -type f -print
-
-          artifacts_dir="./artifacts"
-
-          # Move all files from subdirectories to the main artifacts directory
-          for folder in "$artifacts_dir"/*/; do
-              if [ -d "$folder" ]; then
-                  echo "Processing folder: $folder"
-                  # Move all files from this folder to the main artifacts directory
-                  find "$folder" -type f -exec mv -v {} "$artifacts_dir/" \;
-                  # Remove the now-empty folder
-                  rmdir "$folder"
-              fi
+          for folder in ./artifacts/*/; do
+            if [ -d "$folder" ]; then
+              find "$folder" -type f -exec mv -v {} ./artifacts/ \;
+              rmdir "$folder"
+            fi
           done
 
       - name: Create release
-        if: ${{ inputs.create_release != false }}
         uses: ncipollo/release-action@v1.16.0
         with:
           artifacts: "artifacts/*"
