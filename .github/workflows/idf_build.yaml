@@ -130,6 +130,9 @@ jobs:
         with:
           setup_only: true
 
+      - name: Install nanopb protoc plugin
+        run: pip install nanopb
+
       - name: Cache build artifacts
         uses: actions/cache@v4
         with:
