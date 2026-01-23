@@ -141,9 +141,9 @@ jobs:
             !project/build/*.bin
             !project/build/*.elf
             !project/build/*.map
-          key: build-${{ matrix.config }}-${{ hashFiles('project/**/CMakeLists.txt', 'project/**/Kconfig*', 'project/sdkconfig', 'project/components/**', 'project/main/**') }}
+          key: build-${{ inputs.idf_version }}-${{ env.IDF_TARGET }}-${{ matrix.config }}-${{ hashFiles('project/**/CMakeLists.txt', 'project/**/Kconfig*', 'project/sdkconfig', 'project/components/**', 'project/main/**') }}
           restore-keys: |
-            build-${{ matrix.config }}-
+            build-${{ inputs.idf_version }}-${{ env.IDF_TARGET }}-${{ matrix.config }}-
 
       - name: Build project
         working-directory: project
