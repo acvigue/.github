@@ -1,0 +1,87 @@
+name: ArgoCD Redeploy
+
+on:
+  workflow_call:
+    inputs:
+      argocd_repo:
+        description: 'ArgoCD deployment repository (e.g., org/k8s-deployments)'
+        required: true
+        type: string
+      deployment_file:
+        description: 'Path to the deployment YAML file within the ArgoCD repo'
+        required: true
+        type: string
+      target_branch:
+        description: 'Branch to update in the ArgoCD repo'
+        required: false
+        type: string
+        default: 'main'
+      annotation_key:
+        description: 'Pod annotation key for the restart timestamp'
+        required: false
+        type: string
+        default: 'kubectl.kubernetes.io/restartedAt'
+    secrets:
+      DEPLOY_APP_ID:
+        description: 'GitHub App ID for ArgoCD repo access'
+        required: true
+      DEPLOY_APP_PRIVATE_KEY:
+        description: 'GitHub App private key for ArgoCD repo access'
+        required: true
+
+jobs:
+  redeploy:
+    name: Trigger Redeploy
+    runs-on: ubuntu-latest
+    # Restrict to allowed organizations — update this list as needed
+    if: contains(fromJSON('["acvigue","koiosdigital"]'), github.repository_owner)
+    steps:
+      - name: Parse ArgoCD repo
+        id: repo
+        run: |
+          echo "owner=$(echo '${{ inputs.argocd_repo }}' | cut -d'/' -f1)" >> $GITHUB_OUTPUT
+          echo "name=$(echo '${{ inputs.argocd_repo }}' | cut -d'/' -f2)" >> $GITHUB_OUTPUT
+
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.DEPLOY_APP_ID }}
+          private-key: ${{ secrets.DEPLOY_APP_PRIVATE_KEY }}
+          owner: ${{ steps.repo.outputs.owner }}
+          repositories: ${{ steps.repo.outputs.name }}
+
+      - name: Checkout ArgoCD repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.argocd_repo }}
+          token: ${{ steps.app-token.outputs.token }}
+          ref: ${{ inputs.target_branch }}
+
+      - name: Update deployment timestamp
+        run: |
+          TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          yq -i '.spec.template.metadata.annotations."${{ inputs.annotation_key }}" = "'"$TIMESTAMP"'"' \
+            "${{ inputs.deployment_file }}"
+          echo "Updated ${{ inputs.deployment_file }} with ${{ inputs.annotation_key }}=$TIMESTAMP"
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "${{ inputs.deployment_file }}"
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          git commit -m "chore: trigger redeploy for ${{ github.repository }}
+
+          Triggered by: ${{ github.repository }}@${{ github.sha }}
+          Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          # Retry loop to handle concurrent pushes from other services
+          for i in 1 2 3; do
+            git pull --rebase && git push && break
+            echo "Push failed, retrying ($i/3)..."
+            sleep $((RANDOM % 5 + 1))
+          done
