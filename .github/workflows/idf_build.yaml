@@ -251,7 +251,10 @@ jobs:
 
       # Push the app image (not bootloader/partition table) to the Koios OTA
       # service. The esp-idf-app adapter introspects version/chip/signing from
-      # the image itself, so only a display name travels as metadata.
+      # the image itself. Variant builds additionally pin the artifact to the
+      # variant's device class (<idf_target>-<variant>, e.g.
+      # esp32s3-matrx_v9_64x32) so deployments can never offer a variant image
+      # to the wrong hardware SKU; "default" builds stay chip-wide.
       - name: Upload app image to Koios OTA
         if: inputs.ota_upload && env.BUILD_VERSION != 'dev'
         working-directory: project
@@ -280,8 +283,14 @@ jobs:
           fi
 
           NAME="${{ inputs.project_name }} ${BUILD_VARIANT} v${BUILD_VERSION}"
+          UPLOAD_URL="${{ inputs.ota_url }}/v1/artifacts?name=$(jq -rn --arg v "$NAME" '$v|@uri')"
+          if [ "${BUILD_VARIANT}" != "default" ]; then
+            DEVICE_CLASS=$(echo "${IDF_TARGET}-${BUILD_VARIANT}" | tr '[:upper:]' '[:lower:]')
+            UPLOAD_URL="${UPLOAD_URL}&device_classes=${DEVICE_CLASS}"
+            echo "Pinning artifact to device class: ${DEVICE_CLASS}"
+          fi
           RESPONSE=$(curl -fsS -X POST \
-            "${{ inputs.ota_url }}/v1/artifacts?name=$(jq -rn --arg v "$NAME" '$v|@uri')" \
+            "$UPLOAD_URL" \
             -H "Authorization: Bearer $TOKEN" \
             -H "Content-Type: application/octet-stream" \
             --data-binary "@build/$APP_FILE")
