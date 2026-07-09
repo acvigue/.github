@@ -39,6 +39,28 @@ on:
         required: false
         type: boolean
         default: false
+      ota_upload:
+        description: "Upload the app image to the Koios OTA service (tag builds only)"
+        required: false
+        type: boolean
+        default: false
+      ota_url:
+        description: "Koios OTA service origin"
+        required: false
+        type: string
+        default: "https://ota.api.koios.sh"
+      auth_url:
+        description: "Koios auth service origin (client_credentials token exchange)"
+        required: false
+        type: string
+        default: "https://auth.koios.sh"
+    secrets:
+      KOIOS_CLIENT_ID:
+        description: "Koios M2M client id (required when ota_upload is true)"
+        required: false
+      KOIOS_CLIENT_SECRET:
+        description: "Koios M2M client secret (required when ota_upload is true)"
+        required: false
 
 jobs:
   variants:
@@ -226,6 +248,51 @@ jobs:
         with:
           name: ${{ matrix.config }}_firmware_files
           path: project/output/*
+
+      # Push the app image (not bootloader/partition table) to the Koios OTA
+      # service. The esp-idf-app adapter introspects version/chip/signing from
+      # the image itself, so only a display name travels as metadata.
+      - name: Upload app image to Koios OTA
+        if: inputs.ota_upload && env.BUILD_VERSION != 'dev'
+        working-directory: project
+        env:
+          KOIOS_CLIENT_ID: ${{ secrets.KOIOS_CLIENT_ID }}
+          KOIOS_CLIENT_SECRET: ${{ secrets.KOIOS_CLIENT_SECRET }}
+        run: |
+          APP_FILE=$(jq -r '.app.file // empty' build/flasher_args.json)
+          if [ -z "$APP_FILE" ] || [ ! -f "build/$APP_FILE" ]; then
+            echo "Error: app image not found via flasher_args.json .app.file"
+            exit 1
+          fi
+
+          if [ -z "$KOIOS_CLIENT_ID" ] || [ -z "$KOIOS_CLIENT_SECRET" ]; then
+            echo "Error: ota_upload is enabled but KOIOS_CLIENT_ID/KOIOS_CLIENT_SECRET secrets are not set"
+            exit 1
+          fi
+
+          TOKEN=$(curl -fsS -X POST "${{ inputs.auth_url }}/api/oauth/token" \
+            -d grant_type=client_credentials \
+            -d client_id="$KOIOS_CLIENT_ID" \
+            -d client_secret="$KOIOS_CLIENT_SECRET" | jq -r '.access_token // empty')
+          if [ -z "$TOKEN" ]; then
+            echo "Error: Koios token exchange failed"
+            exit 1
+          fi
+
+          NAME="${{ inputs.project_name }} ${BUILD_VARIANT} v${BUILD_VERSION}"
+          RESPONSE=$(curl -fsS -X POST \
+            "${{ inputs.ota_url }}/v1/artifacts?name=$(jq -rn --arg v "$NAME" '$v|@uri')" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/octet-stream" \
+            --data-binary "@build/$APP_FILE")
+
+          echo "$RESPONSE" | jq '{id: .data.id, version: .data.version, chip: .data.chip, size: .data.size, warnings: .metadata.warnings}'
+          {
+            echo "### Koios OTA artifact — ${BUILD_VARIANT}"
+            echo '```json'
+            echo "$RESPONSE" | jq '.data'
+            echo '```'
+          } >> $GITHUB_STEP_SUMMARY
 
   release:
     name: Release
