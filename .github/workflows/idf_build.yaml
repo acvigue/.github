@@ -285,7 +285,7 @@ jobs:
           NAME="${{ inputs.project_name }} ${BUILD_VARIANT} v${BUILD_VERSION}"
           UPLOAD_URL="${{ inputs.ota_url }}/v1/artifacts?name=$(jq -rn --arg v "$NAME" '$v|@uri')"
           if [ "${BUILD_VARIANT}" != "default" ]; then
-            DEVICE_CLASS=$(echo "${IDF_TARGET}-${BUILD_VARIANT}" | tr '[:upper:]' '[:lower:]')
+            DEVICE_CLASS=$(echo "${IDF_TARGET}" | tr '[:upper:]' '[:lower:]')
             UPLOAD_URL="${UPLOAD_URL}&device_classes=${DEVICE_CLASS}"
             echo "Pinning artifact to device class: ${DEVICE_CLASS}"
           fi
